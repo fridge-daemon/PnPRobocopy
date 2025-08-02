@@ -1,0 +1,97 @@
+# === Strict Path Resolver ===
+function Resolve-PnPFolderPath {
+    param(
+        [string]$BasePath
+    )
+
+    # Normalize: remove leading slash if present
+    $normalizedPath = $BasePath.TrimStart('/')
+    $parts = $normalizedPath -split '/'
+    $currentPath = $parts[0]
+
+    Write-Host " Resolving path: $normalizedPath" -ForegroundColor Cyan
+    Write-Host " Parts: $($parts -join ', ')" -ForegroundColor DarkGray
+
+    for ($i=1; $i -lt $parts.Count; $i++) {
+        $nextPart = $parts[$i]
+        Write-Host " Checking: $nextPart under $currentPath" -ForegroundColor DarkCyan
+
+        $exists = Get-PnPFolderItem -FolderSiteRelativeUrl $currentPath -ItemType Folder -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -eq $nextPart }
+
+        if ($exists) {
+            $currentPath = "$currentPath/$nextPart"
+            Write-Host " Found: $nextPart" -ForegroundColor Green
+        }
+        else {
+            Write-Warning " Subfolder '$nextPart' missing under $currentPath"
+            return $null
+        }
+    }
+    return $currentPath
+}
+
+# === Robocopy Function ===
+function Copy-WithRobocopyLogic {
+    param (
+        [string]$SourceFolder,
+        [string]$DestinationFolder
+    )
+
+    Write-Host " Processing: $SourceFolder" -ForegroundColor Cyan
+
+    # Ensure destination exists strictly
+    $resolvedDest = Resolve-PnPFolderPath -BasePath $DestinationFolder
+    if (-not $resolvedDest) {
+        Write-Warning " Destination folder could not be resolved: $DestinationFolder"
+        return
+    }
+
+    # Copy files that don't already exist
+    $sourceFiles = Get-PnPFolderItem -FolderSiteRelativeUrl $SourceFolder -ItemType File -ErrorAction SilentlyContinue
+    foreach ($file in $sourceFiles) {
+        $targetUrl = "$resolvedDest/$($file.Name)"
+        $exists = Get-PnPFolderItem -FolderSiteRelativeUrl $resolvedDest -ItemType File -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -eq $file.Name }
+
+        if ($exists) {
+            Write-Host " Skipped (exists): $($file.Name)" -ForegroundColor Yellow
+        }
+        else {
+            try {
+                Copy-PnPFile -SourceUrl $file.ServerRelativeUrl -TargetUrl $targetUrl -Force
+                Write-Host " Copied: $($file.Name) -> $resolvedDest" -ForegroundColor Green
+            }
+            catch {
+                Write-Warning (" Failed to copy " + $file.Name + " - " + $_.Exception.Message)
+            }
+        }
+    }
+
+    # Process subfolders recursively
+    $sourceSubfolders = Get-PnPFolderItem -FolderSiteRelativeUrl $SourceFolder -ItemType Folder -ErrorAction SilentlyContinue
+    foreach ($subfolder in $sourceSubfolders) {
+        $sourceSubUrl = $subfolder.ServerRelativeUrl.Substring($subfolder.ServerRelativeUrl.IndexOf("Documents"))
+        $destSubUrl   = "$resolvedDest/$($subfolder.Name)"
+
+        Write-Host " Entering: $($subfolder.Name)" -ForegroundColor Magenta
+        Write-Host " Source: $sourceSubUrl" -ForegroundColor DarkGray
+        Write-Host " Destination: $destSubUrl" -ForegroundColor DarkGray
+
+        $destExists = Get-PnPFolderItem -FolderSiteRelativeUrl $resolvedDest -ItemType Folder -ErrorAction SilentlyContinue |
+                      Where-Object { $_.Name -eq $subfolder.Name }
+
+        if ($destExists) {
+            Copy-WithRobocopyLogic -SourceFolder $sourceSubUrl -DestinationFolder $destSubUrl
+        }
+        else {
+            Write-Host "Skipping missing destination subfolder: $destSubUrl" -ForegroundColor DarkYellow
+        }
+    }
+}
+
+# === Run Example ===
+$sourceFolder = "Documents/<Tenant>/FolderName/SubFolderName"
+$destinationFolder = "Documents/<Tenant>/FolderName/SubFolderName"
+
+Copy-WithRobocopyLogic -SourceFolder $sourceFolder -DestinationFolder $destinationFolder
