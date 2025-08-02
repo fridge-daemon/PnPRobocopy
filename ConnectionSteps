@@ -1,0 +1,18 @@
+
+#PnP connector app will need to be created in AzureApps before proceeding
+#Entra ID Services, Manage, App Registrations
+#Graph Files and Sites ReadWrite, Sharepoint AllSites FullControl
+#Redirect URI, Public Client Flows Enabled
+
+
+#Connect PnP at tenant app, pointing to user specific OneDrive location
+Connect-PnPOnline `
+  -Url "https://<tenant>-my.sharepoint.com/personal/<UserFirst>_<UserLast>_<tenant>_com" `
+  -ClientId "<####>" `
+  -Tenant "<####>" `
+  -DeviceLogin #-Interactive #-WebBrowserLogin
+
+
+##test drill down before executing at large scale
+Get-PnPFolderItem -FolderSiteRelativeUrl "Documents" | Select Name, ItemType
+Get-PnPFolderItem -FolderSiteRelativeUrl "Documents/Subfolder1/Subfolder2" | Select Name, ItemType
